@@ -1,14 +1,15 @@
 # Alpha Tool #
 
-**Alpha Tool &ndash; compute alpha-channel from diff values**  
+**Alpha Tool &ndash; computes alpha-channel from pixel difference values**  
 **Copyright (C) 2015 LoRd_MuldeR <<MuldeR2@GMX.de>>. Some Rights Reserved.**
 
 	This program is free software: you can redistribute it and/or modify
 	it under the terms of the GNU General Public License <http://www.gnu.org/>.
 	Note that this program is distributed with ABSOLUTELY NO WARRANTY.
 
+&nbsp;
 
-## Example ##
+## Example: ##
 
 As a picture is worth a thousand words:
 
@@ -23,6 +24,26 @@ As a picture is worth a thousand words:
 
 *Final Result:*
 ![result](img/result.png)
+
+&nbsp;  
+
+## Usage: ##
+
+Alpha Tool command-line syntax is as follows:
+
+	Usage:
+	   AlphaTool.exe <in_1.png> <in_2.png> <out.png> [<mix_mode>] [<map.png>]
+	   
+	Modes:
+	   average, luminosity, lightness
+
+&nbsp;  
+Example command-line:
+
+	AlphaTool.exe "C:\Foo\Input_1.png" "C:\Foo\Input_2.png" "C:\Bar\Output.png"
+
+&nbsp;  
+For information about the different "mixing" modes, pleas have a look [**here**](http://docs.gimp.org/2.6/en/gimp-tool-desaturate.html).
 
 &nbsp;  
 &nbsp;  
