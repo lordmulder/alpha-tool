@@ -36,27 +36,27 @@
 
 typedef struct
 {
-	int r; int g; int b;
+	uchar r; uchar g; uchar b;
 }
 pixval_t;
 
-typedef int (*mix_func_t)(const pixval_t &p);
+typedef uchar (*mix_func_t)(const pixval_t &p);
 
 //========================================================================
 // MIX FUNCTIONS
 //========================================================================
 
-static int mix_average(const pixval_t &p)
+static uchar mix_average(const pixval_t &p)
 {
 	return qBound(0, qRound((double(p.r) + double(p.g) + double(p.b)) / 3.0), 255);
 }
 
-static int mix_luminosity(const pixval_t &p)
+static uchar mix_luminosity(const pixval_t &p)
 {
 	return qBound(0, qRound((0.21 * double(p.r)) + (0.72 * double(p.g)) + (0.07 * double(p.b))), 255);
 }
 
-static int mix_lightness(const pixval_t &p)
+static uchar mix_lightness(const pixval_t &p)
 {
 	return qBound(0, qRound((qMax(qMax(p.r,p.g),p.b) +  qMin(qMin(p.r,p.g),p.b)) / 2.0), 255);
 }
@@ -119,11 +119,15 @@ static QImage *load_image(const wchar_t *const fileName)
 
 static inline pixval_t getPixVal(const QRgb *const line, const int offset)
 {
-	const pixval_t ret =
+	return pixval_t
 	{
 		qRed(line[offset]), qGreen(line[offset]), qBlue(line[offset])
 	};
-	return ret;
+}
+
+static inline void setPixVal(QRgb *const line, const int offset, const pixval_t &val, const uchar &alpha)
+{
+	line[offset] = qRgba(val.r, val.g, val.b, alpha);
 }
 
 static inline pixval_t average(const pixval_t &p1, const pixval_t &p2)
@@ -165,8 +169,9 @@ static int alpha_main(int argc, wchar_t* argv[])
 
 	if(argc < 4)
 	{
-		std::cerr << "Usage:\n   AlphaTool.exe <in_1.png> <in_2.png> <out.png> [<mix_mode>]\n" << std::endl;
-		std::cerr << "Mix Modes:\n   " << std::flush;
+		std::cerr << "Required parameters not specified!\n\n" << std::endl;
+		std::cerr << "Usage:\n   AlphaTool.exe <in_1.png> <in_2.png> <out.png> [<mix_mode>] [<map.png>]\n" << std::endl;
+		std::cerr << "Modes:\n   " << std::flush;
 		for(size_t i = 0; MIX_MODE[i].name && MIX_MODE[i].ptr; i++)
 		{
 			if(i) std::cerr << ", " << std::flush;
@@ -231,13 +236,17 @@ static int alpha_main(int argc, wchar_t* argv[])
 	int bound_x[2] = { size.width()  - 1, 0 };
 	int bound_y[2] = { size.height() - 1, 0 };
 
-	QScopedPointer<QImage> output(new QImage(size, QImage::Format_ARGB32));
+	QScopedPointer<QImage> output[2];
+	output[0].reset(new QImage(size, QImage::Format_ARGB32));
+	output[1].reset(new QImage(size, QImage::Format_ARGB32));
 
 	for(int y = 0; y < size.height(); y++)
 	{
 		print_status(y, size.height());
 
-		QRgb *outPtr = (QRgb*) output->scanLine(y);
+		QRgb *outPtr1 = (QRgb*) output[0]->scanLine(y);
+		QRgb *outPtr2 = (QRgb*) output[1]->scanLine(y);
+
 		const QRgb *line1 = (const QRgb*) input[0]->constScanLine(y);
 		const QRgb *line2 = (const QRgb*) input[1]->constScanLine(y);
 
@@ -246,12 +255,13 @@ static int alpha_main(int argc, wchar_t* argv[])
 			const pixval_t p1 = getPixVal(line1, x);
 			const pixval_t p2 = getPixVal(line2, x);
 
-			const pixval_t avg = average(p1, p2);
-			const int alpha = 255 - DIFF(mix_func(p1), mix_func(p2));
-			outPtr[x] = qRgba(avg.r, avg.g, avg.b, alpha);
+			const uchar diff = DIFF(mix_func(p1), mix_func(p2));
+
+			setPixVal(outPtr1, x, pixval_t{ diff, diff, diff }, 255);
+			setPixVal(outPtr2, x, average(p1, p2), 255 - diff);
 
 			//Update bound values
-			if(alpha > 0)
+			if(diff < 255)
 			{
 				updateBounds(x, y, bound_x, bound_y);
 			}
@@ -265,19 +275,37 @@ static int alpha_main(int argc, wchar_t* argv[])
 	// Auto Cropping
 	//-------------------------------------------------------------------------
 
-	std::cerr << "Image bounds: " << std::flush;
-	std::cerr << "x(" << bound_x[0] << "," << bound_x[1] << ") "  << std::flush;
-	std::cerr << "y(" << bound_y[0] << "," << bound_y[1] << ")\n" << std::flush;
-
-	if((bound_x[0] > 0) || (bound_y[0] > 0) || (bound_x[1] < size.width()-1) || (bound_y[1] < size.height()-1))
+	if((bound_x[0] < bound_x[1]) && (bound_y[0] < bound_y[1]))
 	{
-		const int cropped_w = bound_x[1] + 1 - bound_x[0];
-		const int cropped_h = bound_y[1] + 1 - bound_y[0];
-		std::cerr << "Cropped size: " << cropped_w << " x " << cropped_h << '\n' << std::flush;
-		(*output) = output->copy(bound_x[0], bound_y[0], cropped_w, cropped_h);
+		std::cerr << "Image bounds: " << std::flush;
+		std::cerr << "x(" << bound_x[0] << "," << bound_x[1] << ") "  << std::flush;
+		std::cerr << "y(" << bound_y[0] << "," << bound_y[1] << ")\n" << std::flush;
+
+		if((bound_x[0] > 0) || (bound_y[0] > 0) || (bound_x[1] < size.width()-1) || (bound_y[1] < size.height()-1))
+		{
+			const int cropped_w = bound_x[1] + 1 - bound_x[0];
+			const int cropped_h = bound_y[1] + 1 - bound_y[0];
+			std::cerr << "Cropped size: " << cropped_w << " x " << cropped_h << '\n' << std::flush;
+			(*output[1]) = output[1]->copy(bound_x[0], bound_y[0], cropped_w, cropped_h);
+		}
+
+		std::cerr << std::endl;
 	}
 
-	std::cerr << std::endl;
+	//-------------------------------------------------------------------------
+	// Save diff map
+	//-------------------------------------------------------------------------
+
+	if(argc > 5)
+	{
+		std::cerr << "Saving difference map..." << std::endl;
+		if(!output[0]->save(QString::fromUtf16((const ushort*)argv[5]), "PNG"))
+		{
+			std::cerr << "\nError: Failed to save output file!\n" << std::endl;
+			return EXIT_FAILURE;
+		}
+		std::cerr << "Okay.\n" << std::endl;
+	}
 
 	//-------------------------------------------------------------------------
 	// Save result
@@ -285,9 +313,9 @@ static int alpha_main(int argc, wchar_t* argv[])
 
 	std::cerr << "Saving output image..." << std::endl;
 
-	if(!output->save(QString::fromUtf16((const ushort*)argv[3]), "PNG"))
+	if(!output[1]->save(QString::fromUtf16((const ushort*)argv[3]), "PNG"))
 	{
-		std::cerr << "Error: Failed to save output file!\n" << std::endl;
+		std::cerr << "\nError: Failed to save output file!\n" << std::endl;
 		return EXIT_FAILURE;
 	}
 
@@ -303,6 +331,10 @@ int wmain(int argc, wchar_t* argv[])
 {
 	int ret = -1;
 
+#ifdef NDEBUG
+#ifdef _DEBUG
+#error NDEBUG and _DEBUG are mutually exclusive!
+#endif
 	__try
 	{
 		ret = alpha_main(argc, argv);
@@ -313,6 +345,9 @@ int wmain(int argc, wchar_t* argv[])
 		fflush(stderr);
 		_exit(-1);
 	}
+#else
+	ret = alpha_main(argc, argv);
+#endif
 
 	return ret;
 }

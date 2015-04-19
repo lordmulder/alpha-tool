@@ -2,5 +2,7 @@
 *.sdf
 *.suo
 *.user
+*.local.*
 /bin
 /obj
+/out
