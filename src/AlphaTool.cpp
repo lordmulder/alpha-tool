@@ -22,6 +22,9 @@
 #include <cstdlib>
 #include <cstdio>
 #include <iostream>
+#include <iomanip>
+#include <ctime>
+
 #include <QCoreApplication>
 #include <QStringList>
 #include <QImage>
@@ -89,8 +92,15 @@ static void print_logo(void)
 
 static QCoreApplication *initialize_qt(void)
 {
-	int qt_argc = 1; char *qt_agrv[] = { "AlphaTool.exe" };
-	QCoreApplication *application = new QCoreApplication(qt_argc, qt_agrv);
+	int qt_argc = 1; char *qt_argv[] = { "AlphaTool.exe" };
+
+	if(strcmp(qVersion(), QT_VERSION_STR))
+	{
+		std::cerr << "Invalid Qt version detected: Compiled with v" << QT_VERSION_STR << ", but running on v" << qVersion() << ".\n" << std::endl;
+		return NULL;
+	}
+
+	QCoreApplication *application = new QCoreApplication(qt_argc, qt_argv);
 	if(application)
 	{
 		std::wcerr << L"Using Qt Framework v" << qVersion();
@@ -98,6 +108,7 @@ static QCoreApplication *initialize_qt(void)
 		std::wcerr << L" [" << (const wchar_t*) QLibraryInfo::buildKey().constData() << L"]\n" << std::endl;
 		application->setLibraryPaths(QStringList() << QCoreApplication::applicationDirPath());
 	}
+
 	return application;
 }
 
@@ -156,7 +167,7 @@ static void print_status(const int &val, const int &max)
 // MAIN
 //========================================================================
 
-static int alpha_main(int argc, wchar_t* argv[])
+static int alpha_main(const int &argc, const wchar_t *const argv[])
 {
 	print_logo();
 
@@ -166,6 +177,10 @@ static int alpha_main(int argc, wchar_t* argv[])
 		std::cerr << "Failed to initialized Qt!\n" << std::endl;
 		return EXIT_FAILURE;
 	}
+
+	//-------------------------------------------------------------------------
+	// Initialize arguments
+	//-------------------------------------------------------------------------
 
 	if(argc < 4)
 	{
@@ -181,31 +196,32 @@ static int alpha_main(int argc, wchar_t* argv[])
 		return EXIT_FAILURE;
 	}
 
+	const wchar_t *const file_input1 = argv[1];
+	const wchar_t *const file_input2 = argv[2];
+	const wchar_t *const file_output = argv[3];
+
+	const wchar_t *const mixing_mode = (argc > 4) ? argv[4] : MIX_MODE[1].name;
+	const wchar_t *const out_diffmap = (argc > 5) ? argv[5] : NULL;
+
 	//-------------------------------------------------------------------------
 	// Setup mix function
 	//-------------------------------------------------------------------------
 
 	mix_func_t mix_func = NULL;
 	
-	if(argc > 4)
+	for(size_t i = 0; MIX_MODE[i].name && MIX_MODE[i].ptr; i++)
 	{
-		for(size_t i = 0; MIX_MODE[i].name && MIX_MODE[i].ptr; i++)
+		if(!_wcsicmp(MIX_MODE[i].name, mixing_mode))
 		{
-			if(!_wcsicmp(MIX_MODE[i].name, argv[4]))
-			{
-				mix_func = MIX_MODE[i].ptr;
-				break;
-			}
-		}
-		if(!mix_func)
-		{
-			std::cerr << "Invalid mixing mode has been specified!\n" << std::endl;
-			return EXIT_FAILURE;
+			mix_func = MIX_MODE[i].ptr;
+			break;
 		}
 	}
-	else
+
+	if(!mix_func)
 	{
-		mix_func = &mix_luminosity;
+		std::cerr << "Invalid mixing mode has been specified!\n" << std::endl;
+		return EXIT_FAILURE;
 	}
 
 	//-------------------------------------------------------------------------
@@ -215,8 +231,8 @@ static int alpha_main(int argc, wchar_t* argv[])
 	std::cerr << "Loding input images..." << std::endl;
 
 	QScopedPointer<QImage> input[2];
-	input[0].reset(load_image(argv[1]));
-	input[1].reset(load_image(argv[2]));
+	input[0].reset(load_image(file_input1));
+	input[1].reset(load_image(file_input2));
 
 	std::cerr << "Okay.\n\nImage size: " << input[0]->width() << " x " << input[0]->height() << '\n' << std::endl;
 
@@ -277,29 +293,28 @@ static int alpha_main(int argc, wchar_t* argv[])
 
 	if((bound_x[0] < bound_x[1]) && (bound_y[0] < bound_y[1]))
 	{
-		std::cerr << "Image bounds: " << std::flush;
-		std::cerr << "x(" << bound_x[0] << "," << bound_x[1] << ") "  << std::flush;
-		std::cerr << "y(" << bound_y[0] << "," << bound_y[1] << ")\n" << std::flush;
-
 		if((bound_x[0] > 0) || (bound_y[0] > 0) || (bound_x[1] < size.width()-1) || (bound_y[1] < size.height()-1))
 		{
+			std::cerr << "Auto Cropping:" << std::endl;
+			std::cerr << "-> Image bound offset: " << std::flush;
+			std::cerr << "x = [" << bound_x[0] << "," << bound_x[1] << "]; " << std::flush;
+			std::cerr << "y = [" << bound_y[0] << "," << bound_y[1] << "]\n" << std::flush;
 			const int cropped_w = bound_x[1] + 1 - bound_x[0];
 			const int cropped_h = bound_y[1] + 1 - bound_y[0];
-			std::cerr << "Cropped size: " << cropped_w << " x " << cropped_h << '\n' << std::flush;
+			std::cerr << "-> Cropped image size: " << cropped_w << " x " << cropped_h << '\n' << std::flush;
 			(*output[1]) = output[1]->copy(bound_x[0], bound_y[0], cropped_w, cropped_h);
+			std::cerr << std::endl;
 		}
-
-		std::cerr << std::endl;
 	}
 
 	//-------------------------------------------------------------------------
 	// Save diff map
 	//-------------------------------------------------------------------------
 
-	if(argc > 5)
+	if(out_diffmap)
 	{
 		std::cerr << "Saving difference map..." << std::endl;
-		if(!output[0]->save(QString::fromUtf16((const ushort*)argv[5]), "PNG"))
+		if(!output[0]->save(QString::fromUtf16((const ushort*)out_diffmap), "PNG"))
 		{
 			std::cerr << "\nError: Failed to save output file!\n" << std::endl;
 			return EXIT_FAILURE;
@@ -313,19 +328,47 @@ static int alpha_main(int argc, wchar_t* argv[])
 
 	std::cerr << "Saving output image..." << std::endl;
 
-	if(!output[1]->save(QString::fromUtf16((const ushort*)argv[3]), "PNG"))
+	if(!output[1]->save(QString::fromUtf16((const ushort*)file_output), "PNG"))
 	{
 		std::cerr << "\nError: Failed to save output file!\n" << std::endl;
 		return EXIT_FAILURE;
 	}
 
-	std::cerr << "Okay.\n\nCompleted.\n" << std::endl;
+	std::cerr << "Okay.\n\nCompleted successfully.\n" << std::endl;
 	return EXIT_SUCCESS;
 }
 
 //========================================================================
 // MAIN
 //========================================================================
+
+static int wmain_ex(const int &argc, const wchar_t *const argv[])
+{
+	int ret = -1;
+
+	try
+	{
+		const clock_t nTicks_enter = clock();
+		ret = alpha_main(argc, argv);
+		const clock_t nTicks_leave = clock();
+
+		const double duration = double(nTicks_leave - nTicks_enter) / double(CLOCKS_PER_SEC);
+		std::cerr << "------------\n" << std::endl;
+		std::cerr << "Operation took exactly " << std::setprecision(2) << duration << " seconds.\n" << std::endl;
+	}
+	catch(std::exception& err)
+	{
+		std::cerr << "\n\nUNHANDELED EXCEPTION: " << err.what() << '\n' << std::endl;
+		ret = -1;
+	}
+	catch(...)
+	{
+		std::cerr << "\n\nUNHANDELED UNKNOWN C++ EXCEPTION !!!\n" << std::endl;
+		ret = -1;
+	}
+
+	return ret;
+}
 
 int wmain(int argc, wchar_t* argv[])
 {
@@ -337,11 +380,11 @@ int wmain(int argc, wchar_t* argv[])
 #endif
 	__try
 	{
-		ret = alpha_main(argc, argv);
+		ret = wmain_ex(argc, argv);
 	}
 	__except(1)
 	{
-		fprintf(stderr, "\n\nUNHANDELED EXCEPTION ERROR !!!\n\n");
+		fprintf(stderr, "\n\nUNHANDELED WIN32 EXCEPTION ERROR !!!\n\n");
 		fflush(stderr);
 		_exit(-1);
 	}
